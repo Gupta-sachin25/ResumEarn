@@ -23,10 +23,11 @@ function Login() {
     try {
       if (isSignup) {
         await signup(name, email, password);
+        navigate('/upload-resume');
       } else {
         await login(email, password);
+        navigate('/dashboard');
       }
-      navigate('/upload-resume'); // Redirect after successful auth
     } catch (err) {
       setError(err.response?.data?.message || 'Authentication failed. Please try again.');
     } finally {

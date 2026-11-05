@@ -9,9 +9,11 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Set the base URL for API requests
+  // Set the base URL for API requests: use environment variable in production, fallback to localhost
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+
   const api = axios.create({
-    baseURL: 'http://localhost:5000/api',
+    baseURL: API_BASE_URL,
   });
 
   // Interceptor to add the token to every request
@@ -23,17 +25,28 @@ export const AuthProvider = ({ children }) => {
     return config;
   });
 
+  const refreshUser = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        const response = await api.get('/auth/me');
+        setUser(response.data.user);
+        return response.data.user;
+      }
+    } catch (error) {
+      console.error('Failed to refresh user', error);
+      if (error.response?.status === 401) {
+        localStorage.removeItem('token');
+        setUser(null);
+      }
+    }
+    return null;
+  };
+
   useEffect(() => {
     const checkLoggedIn = async () => {
       try {
-        const token = localStorage.getItem('token');
-        if (token) {
-          const response = await api.get('/auth/me');
-          setUser(response.data.user);
-        }
-      } catch (error) {
-        console.error("Failed to authenticate user", error);
-        localStorage.removeItem('token');
+        await refreshUser();
       } finally {
         setLoading(false);
       }
@@ -61,8 +74,23 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const updateUserCoins = (coins) => {
+    setUser((prev) => (prev ? { ...prev, coins } : prev));
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, signup, logout, loading, api }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        signup,
+        logout,
+        loading,
+        api,
+        refreshUser,
+        updateUserCoins,
+      }}
+    >
       {!loading && children}
     </AuthContext.Provider>
   );

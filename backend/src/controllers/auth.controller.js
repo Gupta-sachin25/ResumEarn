@@ -1,10 +1,11 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma.js';
+import { CONFIG } from '../config/constants.js';
 
 export const signup = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role = 'USER' } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Please provide all required fields' });
@@ -16,21 +17,50 @@ export const signup = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const initialCoins = role === 'USER' ? CONFIG.INITIAL_USER_COINS : 0;
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-      },
+    // Execute in transaction: create user and record initial bonus transaction
+    const user = await prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: ['USER', 'HIRER', 'ADMIN'].includes(role) ? role : 'USER',
+          coins: initialCoins,
+        },
+      });
+
+      if (initialCoins > 0) {
+        await tx.coinTransaction.create({
+          data: {
+            userId: newUser.id,
+            amount: initialCoins,
+            type: 'INITIAL_BONUS',
+            description: 'Welcome bonus',
+          },
+        });
+      }
+
+      return newUser;
     });
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      CONFIG.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
 
     res.status(201).json({
       message: 'User created successfully',
       token,
-      user: { id: user.id, name: user.name, email: user.email }
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        coins: user.coins,
+      },
     });
   } catch (error) {
     console.error('Signup error:', error);
@@ -56,12 +86,22 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      CONFIG.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
 
     res.json({
       message: 'Logged in successfully',
       token,
-      user: { id: user.id, name: user.name, email: user.email }
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        coins: user.coins,
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -73,7 +113,24 @@ export const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
-      select: { id: true, name: true, email: true, createdAt: true }
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        coins: true,
+        createdAt: true,
+        profile: {
+          select: {
+            id: true,
+            fullName: true,
+            skills: true,
+            graduationYear: true,
+            preferredRoles: true,
+            preferredLocations: true,
+          },
+        },
+      },
     });
 
     if (!user) {
